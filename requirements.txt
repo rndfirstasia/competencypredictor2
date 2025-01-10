@@ -1,0 +1,9 @@
+pandas
+boto3
+mysql-connector-python
+sqlalchemy
+streamlit
+Flask
+openai
+requests
+pytz
