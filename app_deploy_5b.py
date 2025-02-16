@@ -807,7 +807,8 @@ with tab1:
                 response = requests.post(f"{flask_url}/transcribe", files=files, headers=keepalive, data=data, timeout=600)
                 
                 if response.headers.get("Content-Encoding") == "gzip":
-                    data = json.loads(gzip.decompress(response.content).decode('utf-8'))
+                    decompressed_data = gzip.decompress(response.content).decode('utf-8')
+                    data = json.loads(decompressed_data)
                 else:
                     data = response.json()
 
