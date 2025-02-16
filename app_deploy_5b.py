@@ -806,11 +806,11 @@ with tab1:
                 keepalive = {"Connection": "keep-alive"}
                 response = requests.post(f"{flask_url}/transcribe", files=files, headers=keepalive, data=data, timeout=600)
                 
-                if response.headers.get("Content-Encoding") == "gzip":
-                    decompressed_data = gzip.decompress(response.content).decode('utf-8')
-                    data = json.loads(decompressed_data)
-                else:
-                    data = response.json()
+                #if response.headers.get("Content-Encoding") == "gzip":
+                    #decompressed_data = gzip.decompress(response.content).decode('utf-8')
+                    #data = json.loads(decompressed_data)
+                #else:
+                    #data = response.json()
 
                 if response.status_code == 200:
                     st.success("Step 2/5: Audio berhasil ditranskripsi.") #debug
