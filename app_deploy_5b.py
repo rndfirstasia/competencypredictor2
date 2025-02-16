@@ -804,7 +804,7 @@ with tab1:
                 files = {'file': (file_name, audio_file_copy.getvalue(), 'audio/wav')}
                 data = {'registration_id': id_input_id_kandidat}
                 keepalive = {"Connection": "keep-alive"}
-                response = requests.post(f"{flask_url}/transcribe", files=files, headers=keepalive, data=data, timeout=600)
+                response = requests.post(f"{flask_url}/transcribe", files=files, headers=keepalive, data=data, timeout=1200)
                 
                 #if response.headers.get("Content-Encoding") == "gzip":
                     #decompressed_data = gzip.decompress(response.content).decode('utf-8')
