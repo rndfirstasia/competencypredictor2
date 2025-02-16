@@ -13,6 +13,9 @@ from io import StringIO
 from collections import defaultdict
 import pytz #datetime sesuai zona waktu indon
 
+import json
+import gzip
+
 #page config
 st.set_page_config(
     page_icon="img/icon.png",
@@ -803,6 +806,11 @@ with tab1:
                 keepalive = {"Connection": "keep-alive"}
                 response = requests.post(f"{flask_url}/transcribe", files=files, headers=keepalive, data=data, timeout=600)
                 
+                if response.headers.get("Content-Encoding") == "gzip":
+                    data = json.loads(gzip.decompress(response.content).decode('utf-8'))
+                else:
+                    data = response.json()
+
                 if response.status_code == 200:
                     st.success("Step 2/5: Audio berhasil ditranskripsi.") #debug
                     segments = response.json() 
