@@ -7,3 +7,5 @@ Flask
 openai
 requests
 pytz
+json
+gzip
