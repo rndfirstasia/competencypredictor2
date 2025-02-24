@@ -17,7 +17,6 @@ import time
 from requests.adapters import HTTPAdapter #dari lib requests, untuk merubah jumlah maksimal percakapan atau durasi waktu tunggu
 from urllib3.util.retry import Retry #retry untuk timeout, maksutnya jika request gagal karena alasan tertentu maka retry akan mencoba untuk mengulang permintaan
 
-import hashlib
 import json
 
 #page config
