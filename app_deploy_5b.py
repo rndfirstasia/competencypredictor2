@@ -3,18 +3,22 @@ import pandas as pd
 import boto3
 from datetime import datetime
 import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error #untuk menunjukkan error yang terjadi saat menghubungkan apliasi ke database
 
 from openai import OpenAI
 import openai
 import requests
-import io
-from io import StringIO
+import io #data akan disimpan di ram sementara, digunakan agar datanya lebih cepat dan tidak perlu disimpan di file yang akan lebih lambat
+from io import StringIO #stringio digunakan untuk data string sedangkan bytesio digunakan untuk data biner
 from collections import defaultdict
 import pytz #datetime sesuai zona waktu indon
 
+import time
+from requests.adapters import HTTPAdapter #dari lib requests, untuk merubah jumlah maksimal percakapan atau durasi waktu tunggu
+from urllib3.util.retry import Retry #retry untuk timeout, maksutnya jika request gagal karena alasan tertentu maka retry akan mencoba untuk mengulang permintaan
+
+import hashlib
 import json
-import gzip
 
 #page config
 st.set_page_config(
@@ -23,17 +27,20 @@ st.set_page_config(
 )
 
 #env
+#taruh semua credential ke secrets
+
 #untuk deploy
 aws_access_key_id = st.secrets["aws"]["aws_access_key_id"]
 aws_secret_access_key = st.secrets["aws"]["aws_secret_access_key"]
 endpoint_url = st.secrets["aws"]["endpoint_url"]
+
 mysql_user = st.secrets["mysql"]["username"]
 mysql_password = st.secrets["mysql"]["password"]
 mysql_host = st.secrets["mysql"]["host"]
 mysql_port = st.secrets["mysql"]["port"]
 mysql_database = st.secrets["mysql"]["database"]
+
 client = OpenAI(api_key=st.secrets["openai"]["api"])
-openai.api_key = st.secrets["openai"]["api"]
 hf_token = st.secrets["hf"]["token"]
 flask_url = st.secrets["flask"]["url"]
  #untuk API PITO
@@ -49,16 +56,6 @@ base_urls = {
     "VAST": vast_url
 }
 
-conn = mysql.connector.connect(
-    user=mysql_user,
-    password=mysql_password,
-    host=mysql_host,
-    port=mysql_port,
-    database=mysql_database
-)
-
-connx = conn.cursor() 
-
 def create_db_connection():
     try:
         conn = mysql.connector.connect(
@@ -73,44 +70,51 @@ def create_db_connection():
         else:
             return None
     except Error as e:
-        print(f"Error while connecting to MySQL: {e}")
+        print(f"Error pada create_db_connection: {e}")
         return None
 
-connx.execute('SELECT * FROM txtan_assessor;')
-df_txtan_assessor = connx.fetchall()
-column_name_txtan_assessor = [i[0] for i in connx.description]
-df_txtan_assessor = pd.DataFrame(df_txtan_assessor, columns=column_name_txtan_assessor)
+conn = create_db_connection()
 
-connx.execute("""
-SELECT
-    pdc.id_product,                          
-	pdc.name_product AS 'PRODUCT',
-	comp.competency AS 'COMPETENCY',
-	comp.description AS 'COMPETENCY DESCRIPTION',
-    lvl.level_name AS 'LEVEL NAME',
-    lvl.level_description AS 'LEVEL DESCRIPTION',
-    comp.id_competency AS 'id_competency'
-FROM `pito_product` AS pdc
-JOIN pito_competency AS comp ON comp.id_product = pdc.id_product
-LEFT JOIN pito_competency_level AS lvl ON comp.id_competency = lvl.id_competency
-""")
-df_pito_product = connx.fetchall()
-column_names_pito_product = [i[0] for i in connx.description]
-df_pito_product = pd.DataFrame(df_pito_product, columns=column_names_pito_product)
-options_product_set = [""] + df_pito_product['PRODUCT'].drop_duplicates().tolist() #list produk dari database
+if conn:
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM txtan_assessor;')
+    df_txtan_assessor = cursor.fetchall()
+    column_name_txtan_assessor = [i[0] for i in cursor.description]
+    df_txtan_assessor = pd.DataFrame(df_txtan_assessor, columns=column_name_txtan_assessor)
 
-connx.execute("""
-SELECT
-    lvl.name_level AS 'NAMA LEVEL',
-    lvl.value_level,
-    lvl.id_level_set
-FROM pito_level AS lvl;
-""")
-df_pito_level = connx.fetchall()
-column_names_pito_level = [i[0] for i in connx.description]
-df_pito_level = pd.DataFrame(df_pito_level, columns=column_names_pito_level)
-options_level_set = [""] + df_pito_level['id_level_set'].drop_duplicates().tolist() #list level dari database
-connx.close()
+    cursor.execute("""
+    SELECT
+        pdc.id_product,                          
+        pdc.name_product AS 'PRODUCT',
+        comp.competency AS 'COMPETENCY',
+        comp.description AS 'COMPETENCY DESCRIPTION',
+        lvl.level_name AS 'LEVEL NAME',
+        lvl.level_description AS 'LEVEL DESCRIPTION',
+        comp.id_competency AS 'id_competency'
+    FROM `pito_product` AS pdc
+    JOIN pito_competency AS comp ON comp.id_product = pdc.id_product
+    LEFT JOIN pito_competency_level AS lvl ON comp.id_competency = lvl.id_competency
+    """)
+    df_pito_product = cursor.fetchall()
+    column_names_pito_product = [i[0] for i in cursor.description]
+    df_pito_product = pd.DataFrame(df_pito_product, columns=column_names_pito_product)
+    options_product_set = [""] + df_pito_product['PRODUCT'].drop_duplicates().tolist() #list produk dari database
+
+    cursor.execute("""
+    SELECT
+        lvl.name_level AS 'NAMA LEVEL',
+        lvl.value_level,
+        lvl.id_level_set
+    FROM pito_level AS lvl;
+    """)
+    df_pito_level = cursor.fetchall()
+    column_names_pito_level = [i[0] for i in cursor.description]
+    df_pito_level = pd.DataFrame(df_pito_level, columns=column_names_pito_level)
+    options_level_set = [""] + df_pito_level['id_level_set'].drop_duplicates().tolist() #list level dari database
+    cursor.close()
+    conn.close()
+else:
+    st.error("Tidak bisa terhubung ke database")
 
 st.header("Aplikasi Prediksi Kompetensi")
 
@@ -182,21 +186,10 @@ with tab1:
             nama_assessor = assessor_row['name_assessor'].values[0]
             st.subheader(f"Selamat Datang, {nama_assessor}")
         else:
-            st.subheader("Kode Assessor tidak terdaftar.") #setting kalau kode assessor salah
-
-    #nanti dikasih juga cara dan deskripsi tiap bagian
-
-    #ini nanti pakai API PITO
-    # with st.container():
-    #     st.markdown('<h2 style="font-size: 24px; font-weight: bold;">Info Kandidat Sesuai ID</h2>', unsafe_allow_html=True)
-    #     st.markdown(f'ID Kandidat: {api_id_kandidat}')
-    #     st.markdown(f'Name: {api_nama}')
-    #     st.markdown(f'Jenis Kelamin: {api_jenis_kelamin}')
-    #     st.markdown(f'Produk: {api_produk}')
+            st.subheader("Kode Assessor tidak terdaftar.")
 
     selected_product = df_pito_product[df_pito_product["PRODUCT"] == selected_option_product_set]
     with st.container(border=True):
-        #Produk yang dipilih
         def get_levels_for_competency(id_competency):
             conn = create_db_connection()
             cursor = conn.cursor()
@@ -611,11 +604,38 @@ with tab1:
     dropdown_options_predict_competency = filtered_levels_predict_competency['NAMA LEVEL'].tolist()
     #st.write(dropdown_options_predict_competency)#debug
 
-    def predict_competency(combined_text, competencies):
+    #dapetin name_level dari table pito level untuk prediksi
+    def get_name_levels_from_id_level_set(id_level_set):
+        conn = create_db_connection()
+        cursor = conn.cursor()
+
+        query = """
+        SELECT name_level FROM pito_level
+        WHERE id_level_set = %s
+        """
+        cursor.execute(query, (id_level_set,))
+        result = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        name_levels = [row[0] for row in result]
+
+        return name_levels
+
+    def predict_competency(combined_text, competencies, id_level_set):
+        name_levels = get_name_levels_from_id_level_set(id_level_set)
+
         prompt = "Saya memiliki transkrip hasil dari wawancara dan daftar kompetensi yang ingin diidentifikasi.\n\n"
         prompt += "Buatlah hasil analisa menjadi bentuk tabel dan prediksi juga levelnya.\n"
         prompt += "Hasil yang dikeluarkan WAJIB table dan TANPA FORMAT TEXT bold, italic atau sejenisnya.\n"
-        prompt += "Level yang digunakan adalah Very High, High, Medium, Low, Very Low dan level WAJIB dalam bahasa inggris.\n"
+
+        prompt += "header kolom table HARUS menggunakan huruf kapital di awal dan dikuti dengan huruf kecil\n"
+
+        prompt += f"Gunakan hanya level dari daftar berikut: {', '.join(name_levels)}.\n"
+        prompt += "Pastikan level yang digunakan sesuai dengan level yang dipilih dan WAJIB DALAM BAHASA INGGRIS.\n"
+        
+        #prompt += "Level yang digunakan sesuai yang tercantum dibawah, semisal ada level 1 sampai level 5 maka level 5 adalah paling besar, atau jika ada very low sampai very high maka very high adalah paling besar. dan level WAJIB dalam bahasa inggris.\n"
         #prompt += f"Level yang digunakan juga mengikuti dari {dropdown_options_predict_competency} dan level WAJIB dalam bahasa inggris.\n"
         prompt += f"Teks transkrip berikut: {combined_text}\n\n"
         prompt += "Berikut adalah daftar kompetensi dengan level dan deskripsinya:\n"
@@ -632,8 +652,8 @@ with tab1:
                             f"      Deskripsi Level: {level_description}\n")
             else:
                 prompt += f"  (Tidak ada level spesifik, gunakan deskripsi kompetensi umum: {competency['description']})\n"
-                prompt += "Level yang digunakan adalah Very High, High, Medium, Low, Very Low dan level WAJIB dalam bahasa inggris.\n"
-                #prompt += f" Serta level mengikuti dari {dropdown_options_predict_competency}."
+                # prompt += "Level yang digunakan adalah Very High, High, Medium, Low, Very Low dan level WAJIB dalam bahasa inggris.\n"
+                prompt += f" Serta level mengikuti dari {dropdown_options_predict_competency}."
 
         prompt += "\nHasil hanya akan berupa tabel dengan kolom: Kompetensi, Level, dan Alasan Kemunculan\n"
         
@@ -716,7 +736,7 @@ with tab1:
 
             # st.success(f"Step 4/5: Mohon tunggu, proses prediksi berlangsung.....") #debug
 
-            predicted_competency = predict_competency(combined_text, competency_list)
+            predicted_competency = predict_competency(combined_text, competency_list, id_level_set_fix)
 
             #st.write(f"Predicted competency for {registration_id}:\n{predicted_competency}") #debug
 
@@ -752,6 +772,24 @@ with tab1:
         else:
             st.error("Error: all_predictions kosong.")
 
+    # ambil data hasil transkrip dari database
+    def fetch_transkrip_from_db(registration_id):
+        conn = create_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        query = """
+        SELECT transkrip, speaker, start_section, end_section
+        FROM txtan_transkrip
+        WHERE registration_id = %s
+        """
+        cursor.execute(query, (registration_id,))
+        transkrip_data = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        return transkrip_data
+
     if st.button("Upload, Transcribe dan Prediksi", key="SimpanTranscribe"):
         if audio_file is not None:
             s3_client = boto3.client('s3',
@@ -774,6 +812,7 @@ with tab1:
             tz = pytz.timezone('Asia/Jakarta')
 
             try:
+                conn = create_db_connection()
                 cursor = conn.cursor()
                 selected_id_product = int(selected_product['id_product'].iloc[0])
                 selected_option_num_speaker = int(selected_option_num_speaker)
@@ -795,78 +834,99 @@ with tab1:
                 id_audio = cursor.lastrowid
                 # st.success("Informasi berhasil tersimpan ke database.") #debug
             except Exception as e:
-                st.error(f"Error saat menyimpan ke database: {e}")
+                st.error(f"Error saat menyimpan ke database 1: {e}")
                 st.stop()
             finally:
-                cursor.close()
+                if 'cursor' in locals() and cursor:
+                    cursor.close()
+                if 'conn' in locals() and conn:
+                    conn.close()
+
+            session = requests.Session()
+            retry = Retry(
+                total=3,                # Total retry jika terjadi error
+                backoff_factor= 300,     # Jeda antar retry 
+                status_forcelist=[500, 502, 503, 504],  # Retry hanya untuk error server
+            )
+            adapter = HTTPAdapter(max_retries=retry)
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
 
             try:
+                # Pastikan ID kandidat valid
+                if not id_input_id_kandidat:
+                    st.error("ID kandidat tidak ditemukan!")
+                    raise ValueError("ID kandidat kosong")
+
+                # Pastikan file audio tidak kosong
+                if not audio_file_copy.getvalue():
+                    st.error("File audio kosong!")
+                    raise ValueError("File audio kosong")
+
                 files = {'file': (file_name, audio_file_copy.getvalue(), 'audio/wav')}
                 data = {'registration_id': id_input_id_kandidat}
-                keepalive = {"Connection": "keep-alive"}
-                response = requests.post(f"{flask_url}/transcribe", files=files, headers=keepalive, data=data, timeout=1200)
-                
-                #if response.headers.get("Content-Encoding") == "gzip":
-                    #decompressed_data = gzip.decompress(response.content).decode('utf-8')
-                    #data = json.loads(decompressed_data)
-                #else:
-                    #data = response.json()
 
-                if response.status_code == 200:
-                    st.success("Step 2/5: Audio berhasil ditranskripsi.") #debug
-                    segments = response.json() 
+                try:
+                    response = requests.post(f"{flask_url}/transcribe", files=files, data=data, stream=True, timeout=600)
+                    response.raise_for_status()  # Raise error jika status_code bukan 200
+                except requests.Timeout:
+                    st.error("Timeout: Proses transkripsi terlalu lama. Coba lagi.")
+                except requests.RequestException as e:
+                    st.error(f"Error saat memanggil API transkripsi: {e}")
+                    raise
 
-                    if segments:
-                        for segment in segments:
-                            registration_id = segment['registration_id']
-                            text = segment['transcript']
-                            speaker = segment['speaker']
-                            start_section = segment['start_section']
-                            end_section = segment['end_section']
+                # Jika sukses
+                if response.json().get("status") == "selesai":
+                    st.success("Step 2/5: Audio berhasil ditranskripsi.")
 
-                            #st.write(f"Registration ID: {registration_id}, ID Audio: {id_audio}, Speaker: {speaker}") #debug
+                    conn = create_db_connection()
+                    cursor = conn.cursor(buffered=True)
 
-                            try:
-                                cursor = conn.cursor()
-                                insert_transcript_query = """
-                                INSERT INTO txtan_transkrip (registration_id, id_audio, start_section, end_section, transkrip, speaker)
-                                VALUES (%s, %s, %s, %s, %s, %s)
-                                """
+                    try:
+                        cursor.execute(
+                            "SELECT id_audio FROM txtan_audio WHERE registration_id = %s",
+                            (id_input_id_kandidat,)
+                        )
+                        result_audio = cursor.fetchone()
 
-                                data_transcript = (
-                                    registration_id,
-                                    id_audio,
-                                    start_section,
-                                    end_section,
-                                    text,
-                                    speaker
-                                )
+                        if not result_audio:
+                            st.error("ID audio tidak ditemukan di database.")
+                        else:
+                            id_audio = result_audio[0]
 
-                                cursor.execute(insert_transcript_query, data_transcript)
-                                conn.commit()
+                            update_transcription_status(id_audio)
 
-                                update_transcription_status(id_audio)
-                            except Exception as e:
-                                st.error(f"Error saat menyimpan transkrip ke database: {e}")
-                            finally:
-                                cursor.close()
+                            start_time = time.time()
+                            timeout_seconds = 720
+                            
+                            while time.time() - start_time < timeout_seconds:
+                                transkrip_result = fetch_transkrip_from_db(id_input_id_kandidat)
+                                
+                                if transkrip_result:  
+                                    
+                                    if id_input_id_kandidat:
+                                        process_transcriptions(id_input_id_kandidat)
+                                        predictor(id_input_id_kandidat)
+                                    else:
+                                        st.error("ID kandidat tidak ditemukan.")
 
-                    else:
-                        st.error("No segments found in the response.")
-                else:
-                    st.error(f"Error saat memanggil API transkripsi: {response.content}")
-                
-                #st.write("transkrip bermasalah") #debug
-                process_transcriptions(id_input_id_kandidat)
-                #st.write("prediktor bermasalah") #debug
-                predictor(id_input_id_kandidat)
-            
-            except Exception as e:
-                st.error(f"Error setelah predictor: {e}")
+                                    break
+                                
+                                time.sleep(10)
+                            else:
+                                st.error("Transkripsi tidak ditemukan dalam 12 menit")
 
+                    except Exception as e:
+                        st.error(f"Terjadi kesalahan saat mengambil data transkrip: {e}")
+
+                    finally:
+                        if 'cursor' in locals() and cursor:
+                            cursor.close()
+                        if 'conn' in locals() and conn:
+                            conn.close()
             finally:
-                cursor.close()
-                conn.close()
+                if 'conn' in locals():
+                    conn.close()
 
 ########################TAB 2
 with tab2:
