@@ -997,13 +997,6 @@ with tab2:
 
 ########################TAB 3
 with tab3:
-    # with st.container():
-    #     st.markdown('<h2 style="font-size: 24px; font-weight: bold;">Info Kandidat Sesuai ID</h2>', unsafe_allow_html=True)
-    #     st.markdown(f'ID Kandidat: {api_id_kandidat}')
-    #     st.markdown(f'Name: {api_nama}')
-    #     st.markdown(f'Jenis Kelamin: {api_jenis_kelamin}')
-    #     st.markdown(f'Produk: {api_produk}')
-
     def get_result_data(registration_id):
         query = """
         SELECT competency, level, reason
@@ -1022,7 +1015,7 @@ with tab3:
             return df
         else:
             return pd.DataFrame(columns=["competency", "level", "reason"])
-        
+
     def get_all_so_values(registration_id):
         conn = create_db_connection()
         try:
@@ -1044,10 +1037,6 @@ with tab3:
     def update_single_entry_db(conn, competency, level, reason, so_level, so_reason, registration_id):
         try:
             cursor = conn.cursor()
-            
-            # Handle None values for so_level and so_reason
-            so_level = so_level if so_level != '' else None
-            so_reason = so_reason if so_reason != '' else None
 
             # Check if the record already exists
             check_query = """
@@ -1073,12 +1062,12 @@ with tab3:
                 cursor.execute(insert_query, (registration_id, competency, level, reason, so_level, so_reason))
 
             conn.commit()
-
+            # st.write("Changes committed to the database.")  # Commented out for production
         except Exception as e:
             print(f"Error updating or inserting entry: {e}")
         finally:
             cursor.close()
-    
+
     with st.container(border=True):
         st.write("Pilihan 'kosong' ada bisa dipilih jika dirasa memang tidak muncul di Assessor")
         st.write("Dropdown kompetensi dan level kompetensi **di sidebar** tidak akan mengubah pilihan level di bagian ini")
@@ -1119,6 +1108,11 @@ with tab3:
                 if f"prev_so_reason_{i}" not in st.session_state:
                     st.session_state[f"prev_so_reason_{i}"] = current_so_reason_value
 
+                # Debug Output: Checking the values before comparison
+                # st.write(f"DEBUG - Row {i} Competency: {row.competency}")
+                # st.write(f"DEBUG - Previous Level: {st.session_state[f'prev_so_level_{i}']}, Current Level: {current_so_level_value}")
+                # st.write(f"DEBUG - Previous Reason: {st.session_state[f'prev_so_reason_{i}']}, Current Reason: {current_so_reason_value}")
+
                 so_level = st.selectbox(
                     f"SO Level {row.competency}", 
                     dropdown_options, 
@@ -1132,12 +1126,15 @@ with tab3:
                     key=f"so_reason_{row.competency}_{i}"
                 )
 
-                # Only track changes in session state, do not update the DB immediately
-                if (so_level != st.session_state[f"prev_so_level_{i}"]) or (so_reason != st.session_state[f"prev_so_reason_{i}"]):
-                    # Save the changes to be updated later
+                # Debug Output: Checking the values after input
+                # st.write(f"DEBUG - After Input - Level: {so_level}, Reason: {so_reason}")
+
+                # Track changes explicitly by comparing values
+                if (so_level != current_so_level_value) or (so_reason != current_so_reason_value):
                     changes_to_save.append((row.competency, row.level, row.reason, so_level, so_reason, id_input_id_kandidat))
                     st.session_state[f"prev_so_level_{i}"] = so_level
                     st.session_state[f"prev_so_reason_{i}"] = so_reason
+                    # st.write(f"DEBUG - Change detected for {row.competency}: {so_level} / {so_reason}")  # Debug output
 
             # Add a "Save" button at the end
             if st.button("Save Changes"):
