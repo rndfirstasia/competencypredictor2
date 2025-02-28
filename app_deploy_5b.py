@@ -39,6 +39,7 @@ mysql_host = st.secrets["mysql"]["host"]
 mysql_port = st.secrets["mysql"]["port"]
 mysql_database = st.secrets["mysql"]["database"]
 
+openai.api_key=st.secrets["openai"]["api"]
 client = OpenAI(api_key=st.secrets["openai"]["api"])
 hf_token = st.secrets["hf"]["token"]
 flask_url = st.secrets["flask"]["url"]
