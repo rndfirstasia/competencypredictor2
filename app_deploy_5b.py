@@ -864,64 +864,98 @@ with tab1:
                 files = {'file': (file_name, audio_file_copy.getvalue(), 'audio/wav')}
                 data = {'registration_id': id_input_id_kandidat}
 
+                # try:
+                #     response = session.post(f"{flask_url}/transcribe", files=files, data=data, stream=True, timeout=1200)
+                #     response.raise_for_status()  # Raise error jika status_code bukan 200
+                # except requests.Timeout:
+                #     st.error("Timeout: Proses transkripsi terlalu lama. Coba lagi.")
+                # except requests.RequestException as e:
+                #     st.error(f"Error saat memanggil API transkripsi: {e}")
+                #     raise
+
+                # # Jika sukses
+                # if response.json().get("status") == "selesai":
+                #     st.success("Step 2/5: Audio berhasil ditranskripsi.")
+
+                #     conn = create_db_connection()
+                #     cursor = conn.cursor(buffered=True)
+
+                #     try:
+                #         cursor.execute(
+                #             "SELECT id_audio FROM txtan_audio WHERE registration_id = %s",
+                #             (id_input_id_kandidat,)
+                #         )
+                #         result_audio = cursor.fetchone()
+
+                #         if not result_audio:
+                #             st.error("ID audio tidak ditemukan di database.")
+                #         else:
+                #             id_audio = result_audio[0]
+
+                #             update_transcription_status(id_audio)
+
+                #             start_time = time.time()
+                #             timeout_seconds = 720
+                            
+                #             while time.time() - start_time < timeout_seconds:
+                #                 transkrip_result = fetch_transkrip_from_db(id_input_id_kandidat)
+                                
+                #                 if transkrip_result:  
+                                    
+                #                     if id_input_id_kandidat:
+                #                         process_transcriptions(id_input_id_kandidat)
+                #                         predictor(id_input_id_kandidat)
+                #                     else:
+                #                         st.error("ID kandidat tidak ditemukan.")
+
+                #                     break
+                                
+                #                 time.sleep(10)
+                #             else:
+                #                 st.error("Transkripsi tidak ditemukan dalam 12 menit")
+
+                #     except Exception as e:
+                #         st.error(f"Terjadi kesalahan saat mengambil data transkrip: {e}")
                 try:
-                    response = session.post(f"{flask_url}/transcribe", files=files, data=data, stream=True, timeout=1200)
-                    response.raise_for_status()  # Raise error jika status_code bukan 200
-                except requests.Timeout:
-                    st.error("Timeout: Proses transkripsi terlalu lama. Coba lagi.")
+                    response = session.post(f"{flask_url}/transcribe", files=files, data=data, timeout=10)
+                    response.raise_for_status()
+                
+                    st.success("Step 2/5: Audio berhasil dikirim untuk transkripsi.")
+                    st.info("Menunggu 10 menit sebelum mengambil hasil transkripsi...")
+                
+                    time.sleep(600)  # Tunggu 10 menit
+                
+                    start_time = time.time()
+                    timeout_seconds = 720  # 12 menit setelah delay
+                
+                    while time.time() - start_time < timeout_seconds:
+                        transkrip_result = fetch_transkrip_from_db(id_input_id_kandidat)
+                
+                        if transkrip_result:  
+                            st.success("Transkripsi berhasil ditemukan!")
+                            
+                            # Lanjutkan ke proses selanjutnya
+                            if id_input_id_kandidat:
+                                process_transcriptions(id_input_id_kandidat)
+                                predictor(id_input_id_kandidat)
+                            else:
+                                st.error("ID kandidat tidak ditemukan.")
+                            break
+                
+                        st.info("Transkripsi belum tersedia, cek lagi dalam 10 detik...")
+                        time.sleep(10)
+                    else:
+                        st.error("Transkripsi tidak ditemukan dalam 12 menit setelah penundaan.")
+                
                 except requests.RequestException as e:
-                    st.error(f"Error saat memanggil API transkripsi: {e}")
+                    st.error(f"Error saat mengirim data ke Flask: {e}")
                     raise
 
-                # Jika sukses
-                if response.json().get("status") == "selesai":
-                    st.success("Step 2/5: Audio berhasil ditranskripsi.")
-
-                    conn = create_db_connection()
-                    cursor = conn.cursor(buffered=True)
-
-                    try:
-                        cursor.execute(
-                            "SELECT id_audio FROM txtan_audio WHERE registration_id = %s",
-                            (id_input_id_kandidat,)
-                        )
-                        result_audio = cursor.fetchone()
-
-                        if not result_audio:
-                            st.error("ID audio tidak ditemukan di database.")
-                        else:
-                            id_audio = result_audio[0]
-
-                            update_transcription_status(id_audio)
-
-                            start_time = time.time()
-                            timeout_seconds = 720
-                            
-                            while time.time() - start_time < timeout_seconds:
-                                transkrip_result = fetch_transkrip_from_db(id_input_id_kandidat)
-                                
-                                if transkrip_result:  
-                                    
-                                    if id_input_id_kandidat:
-                                        process_transcriptions(id_input_id_kandidat)
-                                        predictor(id_input_id_kandidat)
-                                    else:
-                                        st.error("ID kandidat tidak ditemukan.")
-
-                                    break
-                                
-                                time.sleep(10)
-                            else:
-                                st.error("Transkripsi tidak ditemukan dalam 12 menit")
-
-                    except Exception as e:
-                        st.error(f"Terjadi kesalahan saat mengambil data transkrip: {e}")
-
-                    finally:
-                        if 'cursor' in locals() and cursor:
-                            cursor.close()
-                        if 'conn' in locals() and conn:
-                            conn.close()
+                finally:
+                    if 'cursor' in locals() and cursor:
+                        cursor.close()
+                    if 'conn' in locals() and conn:
+                        conn.close()
             finally:
                 if 'conn' in locals():
                     conn.close()
