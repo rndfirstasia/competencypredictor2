@@ -152,6 +152,8 @@ if id_input_id_kandidat:
     if response_id_kandidat.status_code == 200:
         api_data = response_id_kandidat.json()
 
+        st.write(response_id_kandidat.text) #debug
+
         api_id_kandidat = api_data["data"].get('id', 'Tidak tersedia')
         api_nama = api_data["data"].get('name', 'Tidak tersedia')
         api_jenis_kelamin = api_data["data"].get('gender', 'Tidak tersedia')
