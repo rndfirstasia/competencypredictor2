@@ -604,7 +604,7 @@ with tab1:
             SELECT a.id_level_set, lvl.name_level AS 'NAMA LEVEL'
             FROM txtan_audio a
             JOIN pito_level lvl ON a.id_level_set = lvl.id_level_set
-            WHERE a.registration_id = %s AND a.is_transcribed = 1
+            WHERE a.registration_id = %s
             """
             conn = create_db_connection()
             cursor = conn.cursor()
