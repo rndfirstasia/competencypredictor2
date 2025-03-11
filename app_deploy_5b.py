@@ -16,8 +16,12 @@ import pytz #datetime sesuai zona waktu indon
 import time
 from requests.adapters import HTTPAdapter #dari lib requests, untuk merubah jumlah maksimal percakapan atau durasi waktu tunggu
 from urllib3.util.retry import Retry #retry untuk timeout, maksutnya jika request gagal karena alasan tertentu maka retry akan mencoba untuk mengulang permintaan
+import re #regex
 
 import json
+
+import os
+import google.generativeai as genai
 
 #page config
 st.set_page_config(
@@ -29,6 +33,7 @@ st.set_page_config(
 #taruh semua credential ke secrets
 
 #untuk deploy
+genai.configure(api_key=st.secrets['gemini']['api'])
 aws_access_key_id = st.secrets["aws"]["aws_access_key_id"]
 aws_secret_access_key = st.secrets["aws"]["aws_secret_access_key"]
 endpoint_url = st.secrets["aws"]["endpoint_url"]
@@ -56,6 +61,7 @@ base_urls = {
     "VAST": vast_url
 }
 
+#function
 def create_db_connection():
     try:
         conn = mysql.connector.connect(
@@ -291,8 +297,14 @@ with tab1:
             SELECT t.id_transkrip, t.registration_id, t.transkrip, t.speaker, t.start_section, t.end_section, a.num_speakers
             FROM txtan_transkrip t
             INNER JOIN txtan_audio a ON t.id_audio = a.id_audio
-            WHERE a.is_transcribed = %s AND t.registration_id = %s
+            WHERE t.registration_id = %s
             """
+            # query = """
+            # SELECT t.id_transkrip, t.registration_id, t.transkrip, t.speaker, t.start_section, t.end_section, a.num_speakers
+            # FROM txtan_transkrip t
+            # INNER JOIN txtan_audio a ON t.id_audio = a.id_audio
+            # WHERE a.is_transcribed = %s AND t.registration_id = %s
+            # """
             # st.write(f"Executing query: {query}") #debug
             cursor.execute(query, (1, registration_id))
             result = cursor.fetchall()
@@ -386,12 +398,12 @@ with tab1:
         try:
             # st.write("Sending request to API...") #debug
             response = openai.chat.completions.create(
-                model="o1-mini",
-                messages=messages
-                # temperature=0,
-                # top_p=0.5,
-                # frequency_penalty=0,
-                # presence_penalty=0
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=0,
+                top_p=0.5,
+                frequency_penalty=0,
+                presence_penalty=0
             )
 
             # st.write("API Response:", response) #debug
@@ -424,6 +436,8 @@ with tab1:
         
         df = pd.DataFrame(data)
         st.success("Step 3/5: Pembicara berhasil ditambahkan.") #debug
+        #st.write(f"Process GPT response: {df}") #debug
+        
         return df
 
     # Fungsi untuk memproses transkripsi
@@ -536,7 +550,7 @@ with tab1:
         SELECT s.id_transkrip, s.registration_id, s.revisi_transkrip, s.revisi_speaker, s.revisi_start_section, s.revisi_end_section
         FROM txtan_separator s
         INNER JOIN txtan_audio a ON s.registration_id = a.registration_id
-        WHERE a.is_transcribed = 1 AND s.registration_id = %s
+        WHERE s.registration_id = %s
         """
 
         cursor.execute(query, (registration_id,))
@@ -679,12 +693,12 @@ with tab1:
         ]
 
         response = openai.chat.completions.create(
-            model="o1-mini",
-            messages = messages
-            # temperature=0,
-            # top_p=0.5,
-            # frequency_penalty=0,
-            # presence_penalty=0
+            model="gpt-4o-mini",
+            messages = messages,
+            temperature=0,
+            top_p=0.5,
+            frequency_penalty=0,
+            presence_penalty=0
         )
 
         corrected_transcript_dict = response.model_dump()
@@ -779,7 +793,7 @@ with tab1:
         else:
             st.error("Error: all_predictions kosong.")
 
-    # ambil data hasil transkrip dari database
+    #ambil data hasil transkrip pada 
     def fetch_transkrip_from_db(registration_id):
         conn = create_db_connection()
         cursor = conn.cursor(dictionary=True)
@@ -797,20 +811,145 @@ with tab1:
 
         return transkrip_data
 
+    class NamedBytesIO(io.BytesIO):
+        def __init__(self, content, name):
+            super().__init__(content)
+            self.name = name 
+
+    def transcribe_with_whisper(audio_file):
+        if not audio_file:
+            raise ValueError("File audio tidak diberikan")
+        
+        if hasattr(audio_file, 'name'):
+            audio_file_name = audio_file.name
+        else:
+            raise ValueError("Objek audio tidak memiliki atribut nama file")
+
+        st.write(f"Mengirim file ke Whisper API: {audio_file_name}")
+
+        audio_bytes = audio_file.getvalue()
+        
+        audio_file_whisper = NamedBytesIO(audio_bytes, audio_file_name)
+
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(audio_file_name, audio_file_whisper, "audio/m4a"),  
+            response_format="text"
+        )
+
+        return transcript
+
+    def separate_speakers(transcript, num_speakers=2):
+        prompt = f"""
+        Berikut adalah transkrip wawancara dengan {num_speakers} orang.
+        Pisahkan dialog berdasarkan peran:
+        - **Kandidat** (yang menjawab pertanyaan)
+        - **Assessor** (yang bertanya)
+        
+        Transkripsi: {transcript}
+        
+        Format keluaran:
+        **Kandidat:** [isi dialog]
+        **Assessor:** [isi dialog]
+        """
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content.strip()
+    
+    def transcribe_with_whisper(audio_file):
+        if not audio_file:
+            raise ValueError("File audio tidak diberikan")
+        
+        if hasattr(audio_file, 'name'):
+            audio_file_name = audio_file.name
+        else:
+            raise ValueError("Objek audio tidak memiliki atribut nama file")
+        
+        st.write(f"Mengirim file ke Whisper API: {audio_file_name}")
+        
+        audio_bytes = audio_file.getvalue()
+        
+        class NamedBytesIO(io.BytesIO):
+            def __init__(self, content, name):
+                super().__init__(content)
+                self.name = name
+        
+        audio_file_whisper = NamedBytesIO(audio_bytes, audio_file_name)
+        
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(audio_file_name, audio_file_whisper, "audio/m4a"),
+            response_format="text"
+        )
+        
+        process_gpt_response_to_dataframe(transcript)
+        st.success("Step 2/5: Audio berhasil dikirim untuk transkripsi.")
+        return transcript
+    
+    def transcribe_audio_gemini(audio_file_path, model_name="gemini-1.5-pro-latest"):
+        try:
+            try:
+                uploaded_file = genai.upload_file(audio_file_path)
+            except Exception as upload_error:
+                st.error(f"Error during file upload to Gemini API: {upload_error}")
+                return None
+
+            model = genai.GenerativeModel(model_name)
+
+            response = model.generate_content(['Transkrip audio ini\n Hasilnya WAJIB dipisahkan dengan format seperti\n **Assessor:** TEXT TRANSKRIP \n **Kandidat:** TEXT TRANSKRIP\n **Assessor:** TEXT TRANSKRIP\n **Kandidat:** TEXT TRANSKRIP\n dan seterusnya', uploaded_file])
+
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                st.error(f"Transkripsi diblokir karena: {response.prompt_feedback.block_reason}")
+                return None
+
+            if response.text:
+                st.success("Step 2/5: Audio berhasil dikirim untuk transkripsi.")
+                return response.text
+            else:
+                st.warning("Tidak ada teks yang dihasilkan dari Gemini API.")
+                return None
+
+        except FileNotFoundError:
+            st.error(f"Error: File audio tidak ditemukan: {audio_file_path}")
+            return None
+        except Exception as e:
+            st.error(f"Error selama transkripsi dengan Gemini API: {e}")
+            return None
+        
+    def insert_into_separator(id_transkrip, registration_id, revisi_transkrip, revisi_speaker, revisi_start_section, revisi_end_section):
+        conn = create_db_connection()
+        cursor = conn.cursor()
+        query = """
+        INSERT INTO txtan_separator (id_transkrip, registration_id, revisi_transkrip, revisi_speaker, revisi_start_section, revisi_end_section)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        values = (id_transkrip, registration_id, revisi_transkrip, revisi_speaker, revisi_start_section, revisi_end_section)
+        cursor.execute(query, values)
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
     if st.button("Upload, Transcribe dan Prediksi", key="SimpanTranscribe"):
         if audio_file is not None:
             s3_client = boto3.client('s3',
                         aws_access_key_id=aws_access_key_id,
                         aws_secret_access_key=aws_secret_access_key,
                         endpoint_url=endpoint_url)
-            
+
             bucket_name = 'rpi-ta'
             file_name = audio_file.name
-
-            audio_file_copy = io.BytesIO(audio_file.getvalue()) 
+            file_extension = file_name.split('.')[-1].lower()  
+            audio_file_bytes = audio_file.getvalue()
+            audio_file_copy = io.BytesIO(audio_file_bytes)
+            audio_file_whisper = io.BytesIO(audio_file_bytes)
+            audio_file_gemini = io.BytesIO(audio_file_bytes)
 
             try:
-                s3_client.upload_fileobj(audio_file, bucket_name, file_name)
+                s3_client.upload_fileobj(audio_file_copy, bucket_name, file_name)
                 st.success(f"Step 1/5: File {file_name} berhasil terupload.")
             except Exception as e:
                 st.error(f"Error saat upload ke S3: {e}")
@@ -839,9 +978,8 @@ with tab1:
                 cursor.execute(insert_query, data)
                 conn.commit()
                 id_audio = cursor.lastrowid
-                # st.success("Informasi berhasil tersimpan ke database.") #debug
             except Exception as e:
-                st.error(f"Error saat menyimpan ke database 1: {e}")
+                st.error(f"Error saat menyimpan ke database: {e}")
                 st.stop()
             finally:
                 if 'cursor' in locals() and cursor:
@@ -850,122 +988,87 @@ with tab1:
                     conn.close()
 
             session = requests.Session()
-            retry = Retry(
-                total=3,                # Total retry jika terjadi error
-                backoff_factor= 300,     # Jeda antar retry 
-                status_forcelist=[500, 502, 503, 504],  # Retry hanya untuk error server
-            )
+            retry = Retry(total=3, backoff_factor=5, status_forcelist=[500, 502, 503, 504])
             adapter = HTTPAdapter(max_retries=retry)
             session.mount('http://', adapter)
             session.mount('https://', adapter)
 
+            transcript = ""
+
             try:
-                if not id_input_id_kandidat:
-                    st.error("ID kandidat tidak ditemukan!")
-                    raise ValueError("ID kandidat kosong")
-
-                if not audio_file_copy.getvalue():
-                    st.error("File audio kosong!")
-                    raise ValueError("File audio kosong")
-
-                files = {'file': (file_name, audio_file_copy.getvalue(), 'audio/wav')}
+                files = {'file': (file_name, io.BytesIO(audio_file_bytes), 'audio/wav')}
                 data = {'registration_id': id_input_id_kandidat}
 
-                # try:
-                #     response = session.post(f"{flask_url}/transcribe", files=files, data=data, stream=True, timeout=1200)
-                #     response.raise_for_status()  # Raise error jika status_code bukan 200
-                # except requests.Timeout:
-                #     st.error("Timeout: Proses transkripsi terlalu lama. Coba lagi.")
-                # except requests.RequestException as e:
-                #     st.error(f"Error saat memanggil API transkripsi: {e}")
-                #     raise
+                response = session.post(f"{flask_url}/transcribe", files=files, data=data, timeout=10)
+                response.raise_for_status()
+                st.success("Step 2/5: Audio berhasil dikirim untuk transkripsi.")
 
-                # # Jika sukses
-                # if response.json().get("status") == "selesai":
-                #     st.success("Step 2/5: Audio berhasil ditranskripsi.")
+                time.sleep(600)  
+                start_time = time.time()
+                timeout_seconds = 720  
 
-                #     conn = create_db_connection()
-                #     cursor = conn.cursor(buffered=True)
+                transcript = None  
 
-                #     try:
-                #         cursor.execute(
-                #             "SELECT id_audio FROM txtan_audio WHERE registration_id = %s",
-                #             (id_input_id_kandidat,)
-                #         )
-                #         result_audio = cursor.fetchone()
+                while time.time() - start_time < timeout_seconds:
+                    transkrip_result = fetch_transkrip_from_db(id_input_id_kandidat)
+                    if transkrip_result:
+                        #st.success("Transkripsi berhasil ditemukan!") #debug
+                        transcript = "\n".join([row[0] for row in transkrip_result])
+                        break
+                    time.sleep(10)
+                else:
+                    st.error("Transkripsi tidak ditemukan dalam waktu yang ditentukan.")
+                    raise ValueError("Transkripsi gagal")
 
-                #         if not result_audio:
-                #             st.error("ID audio tidak ditemukan di database.")
-                #         else:
-                #             id_audio = result_audio[0]
+                transcript = separate_speakers(transcript, selected_option_num_speaker)
 
-                #             update_transcription_status(id_audio)
-
-                #             start_time = time.time()
-                #             timeout_seconds = 720
-                            
-                #             while time.time() - start_time < timeout_seconds:
-                #                 transkrip_result = fetch_transkrip_from_db(id_input_id_kandidat)
-                                
-                #                 if transkrip_result:  
-                                    
-                #                     if id_input_id_kandidat:
-                #                         process_transcriptions(id_input_id_kandidat)
-                #                         predictor(id_input_id_kandidat)
-                #                     else:
-                #                         st.error("ID kandidat tidak ditemukan.")
-
-                #                     break
-                                
-                #                 time.sleep(10)
-                #             else:
-                #                 st.error("Transkripsi tidak ditemukan dalam 12 menit")
-
-                #     except Exception as e:
-                #         st.error(f"Terjadi kesalahan saat mengambil data transkrip: {e}")
+            except (requests.RequestException, ValueError) as e:
+                #st.warning(f"Flask API gagal. Menggunakan Gemini API sebagai fallback... {e}") #debug
                 try:
-                    response = session.post(f"{flask_url}/transcribe", files=files, data=data, timeout=10)
-                    response.raise_for_status()
-                
-                    st.success("Step 2/5: Audio berhasil dikirim untuk transkripsi.")
-                    st.info("Menunggu 10 menit sebelum mengambil hasil transkripsi...")
-                
-                    time.sleep(600)  # Tunggu 10 menit
-                
-                    start_time = time.time()
-                    timeout_seconds = 720  # 12 menit setelah delay
-                
-                    while time.time() - start_time < timeout_seconds:
-                        transkrip_result = fetch_transkrip_from_db(id_input_id_kandidat)
-                
-                        if transkrip_result:  
-                            st.success("Transkripsi berhasil ditemukan!")
-                            
-                            # Lanjutkan ke proses selanjutnya
-                            if id_input_id_kandidat:
-                                process_transcriptions(id_input_id_kandidat)
-                                predictor(id_input_id_kandidat)
-                            else:
-                                st.error("ID kandidat tidak ditemukan.")
-                            break
-                
-                        st.info("Transkripsi belum tersedia, cek lagi dalam 10 detik...")
-                        time.sleep(10)
-                    else:
-                        st.error("Transkripsi tidak ditemukan dalam 12 menit setelah penundaan.")
-                
-                except requests.RequestException as e:
-                    st.error(f"Error saat mengirim data ke Flask: {e}")
-                    raise
+                    with open("temp_audio." + file_extension, "wb") as temp_file:
+                        temp_file.write(audio_file_bytes)
 
-                finally:
-                    if 'cursor' in locals() and cursor:
-                        cursor.close()
-                    if 'conn' in locals() and conn:
-                        conn.close()
-            finally:
-                if 'conn' in locals():
-                    conn.close()
+                    transcript = transcribe_audio_gemini("temp_audio." + file_extension)  
+                    os.remove("temp_audio." + file_extension)  
+
+                except Exception as e:
+                    #st.warning(f"Gemini API gagal. Menggunakan Whisper API sebagai fallback... {e}") #debug
+                    try:
+                        audio_file_whisper.seek(0)
+                        audio_file_whisper.name = file_name
+                        transcript = transcribe_with_whisper(audio_file_whisper)
+
+                    except Exception as e:
+                        st.error(f"Semua API transkripsi gagal: {e}")
+                        st.stop()
+
+            if not transcript:
+                st.error("Gagal mendapatkan transkripsi dari ketiga metode!")
+                st.stop()
+
+            df = process_gpt_response_to_dataframe(transcript)
+            #st.write(f"DEBUG - Processed DataFrame: {df}")  #debug
+
+            if df is not None and not df.empty:
+                for index, row in df.iterrows():
+                    #st.write(f"DEBUG - Memasukkan ke txtan_separator: {row['text']} | {row['speaker']}")  #debug
+                    insert_into_separator(
+                        id_transkrip=id_audio,  
+                        registration_id=id_input_id_kandidat,
+                        revisi_transkrip=row['text'],
+                        revisi_speaker=row['speaker'],
+                        revisi_start_section=0,  
+                        revisi_end_section=0     
+                    )
+                #st.success("Transkrip berhasil disimpan ke txtan_separator!") #debug
+
+                # Beri jeda sebelum memanggil predictor agar database update
+                time.sleep(5)
+                predictor(id_input_id_kandidat)
+            else:
+                st.error("Gagal memproses transkrip ke dalam dataframe.")
+
+
 
 ########################TAB 2
 with tab2:
