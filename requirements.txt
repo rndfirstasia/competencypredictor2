@@ -7,3 +7,4 @@ openai
 requests
 pytz
 urllib3
+google-generativeai
