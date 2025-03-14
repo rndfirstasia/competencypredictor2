@@ -153,6 +153,8 @@ if id_input_id_kandidat:
     url = f"{base_url}{id_input_id_kandidat}"
     selected_headers = headers[selected_base_url]
 
+    response_id_kandidat = requests.get(url, headers=selected_headers)
+
     if response_id_kandidat.status_code == 200:
         try:
             api_data = response_id_kandidat.json()
