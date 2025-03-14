@@ -153,36 +153,34 @@ if id_input_id_kandidat:
     url = f"{base_url}{id_input_id_kandidat}"
     selected_headers = headers[selected_base_url]
 
-    max_retires = 5
-    for attempt in range(max_retires):
-        response_id_kandidat = requests.get(url, headers=selected_headers)
-        #cek apakah request sukses
-        if response_id_kandidat.status_code == 200:
-            try:
-                api_data = response_id_kandidat.json()
+    if response_id_kandidat.status_code == 200:
+        try:
+            api_data = response_id_kandidat.json()
+            st.session_state.response_id_kandidat = api_data
+        except Exception as e:
+            st.write(f"Error info id kandidat: {e}")
+            
+        api_id_kandidat = api_data["data"].get('id', 'Tidak tersedia')
+        api_nama = api_data["data"].get('name', 'Tidak tersedia')
+        api_jenis_kelamin = api_data["data"].get('gender', 'Tidak tersedia')
+        api_produk = api_data["data"].get('product', 'Tidak tersedia')
+        api_client = api_data["data"].get('client', 'Tidak tersedia')
+        api_dob = api_data["data"].get('dob', 'Tidak tersedia')
+
+        #st.write(response_id_kandidat.text) #debug
         
-                api_id_kandidat = api_data["data"].get('id', 'Tidak tersedia')
-                api_nama = api_data["data"].get('name', 'Tidak tersedia')
-                api_jenis_kelamin = api_data["data"].get('gender', 'Tidak tersedia')
-                api_produk = api_data["data"].get('product', 'Tidak tersedia')
-                api_client = api_data["data"].get('client', 'Tidak tersedia')
-                api_dob = api_data["data"].get('dob', 'Tidak tersedia')
+        with st.container(border=True):
+            st.write("#### Informasi ID Kandidat")
+            
+            st.write(f"ID Kandidat: {api_id_kandidat}")
+            st.write(f"Nama: {api_nama}")
+            st.write(f"Tanggal Lahir: {api_dob}")
+            st.write(f"Jenis Kelamin: {api_jenis_kelamin}")
+            st.write(f"Klien: {api_client}")
+            st.write(f"Produk: {api_produk}")
         
-                st.write(response_id_kandidat.text) #debug
-                
-                with st.container(border=True):
-                    st.write("#### Informasi ID Kandidat")
-                    
-                    st.write(f"ID Kandidat: {api_id_kandidat}")
-                    st.write(f"Nama: {api_nama}")
-                    st.write(f"Tanggal Lahir: {api_dob}")
-                    st.write(f"Jenis Kelamin: {api_jenis_kelamin}")
-                    st.write(f"Klien: {api_client}")
-                    st.write(f"Produk: {api_produk}")
-            except requests.exceptions.JSONDecodeError:
-                time.sleep(2)
-        else:
-            st.error(f"ID Kandidat tidak terdaftar/Sistem salah")
+    else:
+        st.error(f"ID Kandidat tidak terdaftar/Sistem salah")
 else:
     st.warning("Silakan masukkan ID Kandidat.")
 
