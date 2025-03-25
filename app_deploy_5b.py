@@ -621,8 +621,20 @@ with tab1:
                 conn.close()
 
     id_level_set_fix, nama_level = get_level_set_from_audio_table(id_input_id_kandidat)
+    df_pito_level['id_level_set'] = df_pito_level['id_level_set'].astype(str)
+    df_pito_level['NAMA LEVEL'] = df_pito_level['NAMA LEVEL'].astype(str)
+
+    if not id_level_set_fix:
+        id_level_set_fix = selected_option_level_set
+        nama_level = None
+
+    id_level_set_fix = str(id_level_set_fix)
     filtered_levels_predict_competency = df_pito_level[df_pito_level['id_level_set'] == id_level_set_fix]
+    level_names = filtered_levels_predict_competency['NAMA LEVEL'].tolist()
+    #st.write(f"Level names: {level_names}")  #debug
+    #st.write(f"Filtered levels predict competency: {filtered_levels_predict_competency}")  #debug
     dropdown_options_predict_competency = filtered_levels_predict_competency['NAMA LEVEL'].tolist()
+    #st.write(f"Dropdown options predict competency: {dropdown_options_predict_competency}") #debug
     #st.write(dropdown_options_predict_competency)#debug
 
     #dapetin name_level dari table pito level untuk prediksi
@@ -645,7 +657,7 @@ with tab1:
         return name_levels
 
     def predict_competency(combined_text, competencies, id_level_set):
-        name_levels = get_name_levels_from_id_level_set(id_level_set)
+        #name_levels = get_name_levels_from_id_level_set(id_level_set)
 
         prompt = "Saya memiliki transkrip hasil dari wawancara dan daftar kompetensi yang ingin diidentifikasi.\n\n"
         prompt += "Buatlah hasil analisa menjadi bentuk tabel dan prediksi juga levelnya.\n"
@@ -653,7 +665,7 @@ with tab1:
 
         prompt += "header kolom table HARUS menggunakan huruf kapital di awal dan dikuti dengan huruf kecil\n"
 
-        prompt += f"Gunakan hanya level dari daftar berikut: {', '.join(name_levels)}.\n"
+        prompt += f"Gunakan hanya level dari daftar berikut: {', '.join(level_names)}.\n" ### ini name levelnya belum ada
         prompt += "Pastikan level yang digunakan sesuai dengan level yang dipilih dan WAJIB DALAM BAHASA INGGRIS.\n"
         
         #prompt += "Level yang digunakan sesuai yang tercantum dibawah, semisal ada level 1 sampai level 5 maka level 5 adalah paling besar, atau jika ada very low sampai very high maka very high adalah paling besar. dan level WAJIB dalam bahasa inggris.\n"
@@ -662,9 +674,9 @@ with tab1:
         prompt += "Berikut adalah daftar kompetensi dengan level dan deskripsinya:\n"
         
         for competency in competencies:
-            prompt += (f"- Kompetensi: {competency['competency']}\n"
-                    f"  Deskripsi Kompetensi (umum): {competency['description']}\n")
+            prompt += (f"- Kompetensi Bernama: {competency['competency']} deskripsinya adalah\n")
             
+            #kalau ada level
             if competency.get("levels"):
                 prompt += "  Level:\n"
                 for level in competency["levels"]:
@@ -674,7 +686,7 @@ with tab1:
             else:
                 prompt += f"  (Tidak ada level spesifik, gunakan deskripsi kompetensi umum: {competency['description']})\n"
                 # prompt += "Level yang digunakan adalah Very High, High, Medium, Low, Very Low dan level WAJIB dalam bahasa inggris.\n"
-                prompt += f" Serta level mengikuti dari {dropdown_options_predict_competency}."
+                prompt += f" Serta level mengikuti dari {level_names}."
 
         prompt += "\nHasil hanya akan berupa tabel dengan kolom: Kompetensi, Level, dan Alasan Kemunculan\n"
         
@@ -718,7 +730,7 @@ with tab1:
 
         return combined_data
 
-    def predictor(registration_id):
+    def predictor(registration_id, dropdown_options_predict_competency):
         # Ambil data revisi dan kompetensi
         separator_data = get_separator(registration_id)
         #st.write(f"Separator data: {separator_data}") #debug
@@ -757,7 +769,7 @@ with tab1:
 
             # st.success(f"Step 4/5: Mohon tunggu, proses prediksi berlangsung.....") #debug
 
-            predicted_competency = predict_competency(combined_text, competency_list, id_level_set_fix)
+            predicted_competency = predict_competency(combined_text, competency_list, level_names)
 
             #st.write(f"Predicted competency for {registration_id}:\n{predicted_competency}") #debug
 
@@ -1064,7 +1076,7 @@ with tab1:
 
                 # Beri jeda sebelum memanggil predictor agar database update
                 time.sleep(5)
-                predictor(id_input_id_kandidat)
+                predictor(id_input_id_kandidat, dropdown_options_predict_competency)
             else:
                 st.error("Gagal memproses transkrip ke dalam dataframe.")
 
